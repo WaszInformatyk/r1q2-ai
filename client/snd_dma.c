@@ -62,6 +62,8 @@ static qboolean	s_registering;
 
 static int	soundtime;		// sample PAIRS
 int   		paintedtime; 	// sample PAIRS
+static int	s_sound_buffers;
+static int	s_oldsamplepos;
 
 // during registration it is possible to have more sounds
 // than could actually be referenced during gameplay,
@@ -168,7 +170,8 @@ void S_Init (int fullInit)
 	if (!cl_quietstartup->intvalue || developer->intvalue)
 		Com_Printf("\n------- sound initialization -------\n", LOG_CLIENT|LOG_NOTICE);
 
-	knownsounds = rbinit ((int (EXPORT *)(const void *, const void *))strcmp, 0);
+	if (!knownsounds)
+		knownsounds = rbinit ((int (EXPORT *)(const void *, const void *))strcmp, 0);
 
 	s_volume = Cvar_Get ("s_volume", "0.5", CVAR_ARCHIVE);
 	s_khz = Cvar_Get ("s_khz", "22", CVAR_ARCHIVE);
@@ -237,6 +240,8 @@ void S_Init (int fullInit)
 
 			soundtime = 0;
 			paintedtime = 0;
+			s_sound_buffers = 0;
+			s_oldsamplepos = 0;
 
 			if (!cl_quietstartup->intvalue || developer->intvalue)
 				Com_Printf ("sound sampling rate: %i\n", LOG_CLIENT|LOG_NOTICE, dma.speed);
@@ -318,6 +323,7 @@ void S_Shutdown(void)
 	memset (known_sfx, 0, sizeof(known_sfx));
 
 	rbdestroy (knownsounds);
+	knownsounds = NULL;
 
 	num_sfx = 0;
 	sound_started = 0;
@@ -1816,8 +1822,6 @@ void S_Update(vec3_t origin, vec3_t forward, vec3_t right, vec3_t up)
 void GetSoundtime(void)
 {
 	int		samplepos;
-	static	int		buffers;
-	static	int		oldsamplepos;
 	int		fullsamples;
 	
 	fullsamples = dma.samples / dma.channels;
@@ -1826,20 +1830,20 @@ void GetSoundtime(void)
 // calls to S_Update.  Oh well.
 	samplepos = SNDDMA_GetDMAPos();
 
-	if (samplepos < oldsamplepos)
+	if (samplepos < s_oldsamplepos)
 	{
-		buffers++;					// buffer wrapped
+		s_sound_buffers++;					// buffer wrapped
 		
 		if (paintedtime > 0x40000000)
 		{	// time to chop things off to avoid 32 bit limits
-			buffers = 0;
+			s_sound_buffers = 0;
 			paintedtime = fullsamples;
 			S_StopAllSounds ();
 		}
 	}
-	oldsamplepos = samplepos;
+	s_oldsamplepos = samplepos;
 
-	soundtime = buffers*fullsamples + samplepos/dma.channels;
+	soundtime = s_sound_buffers*fullsamples + samplepos/dma.channels;
 }
 
 

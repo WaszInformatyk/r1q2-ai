@@ -1,6 +1,5 @@
-// Main windowed and fullscreen graphics interface module. This module
-// is used for both the software and OpenGL rendering versions of the
-// Quake refresh engine.
+// Main windowed and fullscreen graphics interface module for the
+// SDL OpenGL rendering version of the Quake refresh engine.
 
 #define SO_FILE "/etc/quake2.conf"
 
@@ -9,6 +8,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
+
+#include <SDL.h>
 
 #include "../client/client.h"
 
@@ -25,6 +26,9 @@ cvar_t		*vid_ref;			// Name of Refresh DLL loaded
 cvar_t		*vid_xpos;			// X coordinate of window position
 cvar_t		*vid_ypos;			// Y coordinate of window position
 cvar_t		*vid_fullscreen;
+cvar_t		*vid_display;
+cvar_t		*vid_width;
+cvar_t		*vid_height;
 
 // Global variables used internally by this module
 viddef_t	viddef;				// global video state; used by other modules
@@ -132,12 +136,60 @@ vidmode_t vid_modes[] =
 	{ "Mode 6: 1024x768",  1024, 768,  6 },
 	{ "Mode 7: 1152x864",  1152, 864,  7 },
 	{ "Mode 8: 1280x1024",  1280, 1024, 8 },
-	{ "Mode 9: 1600x1200", 1600, 1200, 9 }
+	{ "Mode 9: 1600x1200", 1600, 1200, 9 },
+	{ "Mode 10: 1280x720", 1280, 720, 10 },
+	{ "Mode 11: 1366x768", 1366, 768, 11 },
+	{ "Mode 12: 1600x900", 1600, 900, 12 },
+	{ "Mode 13: 1920x1080", 1920, 1080, 13 },
+	{ "Mode 14: 2560x1440", 2560, 1440, 14 },
+	{ "Mode 15: 3440x1440", 3440, 1440, 15 },
+	{ "Mode 16: 3840x2160", 3840, 2160, 16 }
 };
 
 qboolean VID_GetModeInfo(unsigned int *width, unsigned int *height, int mode)
 {
-	if ( mode < 0 || mode >= VID_NUM_MODES )
+	SDL_DisplayMode display_mode;
+	int display_index;
+	int display_count;
+
+	if (mode == -1)
+	{
+		*width = Cvar_IntValue ("vid_width");
+		*height = Cvar_IntValue ("vid_height");
+		if (*width < 800)
+			*width = 800;
+		if (*height < 600)
+			*height = 600;
+		if (*width > 16384)
+			*width = 16384;
+		if (*height > 16384)
+			*height = 16384;
+		return true;
+	}
+
+	if (mode == -2)
+	{
+		display_count = SDL_GetNumVideoDisplays ();
+		display_index = vid_display ? vid_display->intvalue : 0;
+		if (display_index < 0 || display_index >= display_count)
+			display_index = 0;
+
+		if (SDL_GetCurrentDisplayMode (display_index, &display_mode) == 0)
+		{
+			*width = display_mode.w;
+			*height = display_mode.h;
+		}
+		else
+		{
+			*width = 800;
+			*height = 600;
+		}
+		return true;
+	}
+
+	if ( mode < 4 )
+		mode = 4;
+	if ( mode >= VID_NUM_MODES )
 		return false;
 
 	*width  = vid_modes[mode].width;
@@ -360,7 +412,12 @@ update the rendering DLL and/or video mode to match.
 void VID_ReloadRefresh (void)
 {
 	char name[100];
-	cvar_t *sw_mode;
+
+	if ( Q_stricmp( vid_ref->string, "gl" ) != 0 )
+	{
+		Com_Printf( "Only the OpenGL renderer is supported; using vid_ref gl.\n", LOG_CLIENT );
+		Cvar_Set( "vid_ref", "gl" );
+	}
 
 	if ( vid_ref->modified )
 	{
@@ -378,32 +435,10 @@ void VID_ReloadRefresh (void)
 		cl.frame.valid = false;
 		cls.disable_screen = true;
 
-		sprintf( name, "ref_%s.so", vid_ref->string );
+		strcpy( name, "ref_gl.so" );
 		if ( !VID_LoadRefresh( name ) )
-		{
-			if ( strcmp (vid_ref->string, "soft") == 0 ||
-				strcmp (vid_ref->string, "softx") == 0 ) {
-				Com_Printf("Refresh failed\n", LOG_CLIENT);
-				sw_mode = Cvar_Get( "sw_mode", "0", 0 );
-				if (sw_mode->value != 0) {
-					Com_Printf("Trying mode 0\n", LOG_CLIENT);
-					Cvar_SetValue("sw_mode", 0);
-					if ( !VID_LoadRefresh( name ) )
-						Com_Error (ERR_FATAL, "Couldn't fall back to software refresh!");
-				} else
-					Com_Error (ERR_FATAL, "Couldn't fall back to software refresh!");
-			}
+			Com_Error (ERR_FATAL, "Couldn't load OpenGL renderer %s", name);
 
-			Cvar_Set( "vid_ref", "soft" );
-
-			/*
-			** drop the console if we fail to load a refresh
-			*/
-			if ( cls.key_dest != key_console )
-			{
-				Con_ToggleConsole_f();
-			}
-		}
 		cls.disable_screen = false;
 	}
 
@@ -416,15 +451,14 @@ VID_Init
 */
 void VID_Init (void)
 {
-	/* Create the video variables so we know how to start the graphics drivers */
-	// if DISPLAY is defined, try X
-	if (getenv("DISPLAY"))
-		vid_ref = Cvar_Get ("vid_ref", "softx", CVAR_ARCHIVE);
-	else
-		vid_ref = Cvar_Get ("vid_ref", "soft", CVAR_ARCHIVE);
+	/* The Linux build supports only the SDL OpenGL renderer. */
+	vid_ref = Cvar_Get ("vid_ref", "gl", CVAR_ARCHIVE);
 	vid_xpos = Cvar_Get ("vid_xpos", "3", CVAR_ARCHIVE);
 	vid_ypos = Cvar_Get ("vid_ypos", "22", CVAR_ARCHIVE);
 	vid_fullscreen = Cvar_Get ("vid_fullscreen", "0", CVAR_ARCHIVE);
+	vid_display = Cvar_Get ("vid_display", "0", CVAR_ARCHIVE);
+	vid_width = Cvar_Get ("vid_width", "800", CVAR_ARCHIVE);
+	vid_height = Cvar_Get ("vid_height", "600", CVAR_ARCHIVE);
 	vid_gamma = Cvar_Get( "vid_gamma", "1", CVAR_ARCHIVE );
 
 	/* Add some console commands that we want to handle */
@@ -499,6 +533,14 @@ void IN_Move (usercmd_t *cmd)
 
 void IN_Frame (void)
 {
+	if (RW_IN_Activate_fp)
+	{
+		if ( !cl.refresh_prepped || cls.key_dest == key_console || cls.key_dest == key_menu)
+			RW_IN_Activate_fp(false);
+		else
+			RW_IN_Activate_fp(true);
+	}
+
 	if (RW_IN_Frame_fp)
 		RW_IN_Frame_fp();
 }

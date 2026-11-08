@@ -178,6 +178,9 @@ cvar_t	*gl_coloredlightmaps;
 //cvar_t	*gl_3dlabs_broken;
 
 cvar_t	*vid_fullscreen;
+cvar_t	*vid_display;
+cvar_t	*vid_width;
+cvar_t	*vid_height;
 cvar_t	*vid_gamma;
 cvar_t	*vid_ref;
 cvar_t	*vid_forcedrefresh;
@@ -1351,7 +1354,7 @@ void R_Register( void )
 	gl_modulate = ri.Cvar_Get ("gl_modulate", "2", CVAR_ARCHIVE );
 	//gl_log = ri.Cvar_Get( "gl_log", "0", 0 );
 	gl_bitdepth = ri.Cvar_Get( "gl_bitdepth", "0", 0 );
-	gl_mode = ri.Cvar_Get( "gl_mode", "3", CVAR_ARCHIVE );
+	gl_mode = ri.Cvar_Get( "gl_mode", "4", CVAR_ARCHIVE );
 	//gl_lightmap = ri.Cvar_Get ("gl_lightmap", "0", 0);
 	gl_shadows = ri.Cvar_Get ("gl_shadows", "0", CVAR_ARCHIVE );
 	gl_dynamic = ri.Cvar_Get ("gl_dynamic", "1", 0);
@@ -1439,8 +1442,11 @@ void R_Register( void )
 	//gl_3dlabs_broken = ri.Cvar_Get( "gl_3dlabs_broken", "1", CVAR_ARCHIVE );
 
 	vid_fullscreen = ri.Cvar_Get( "vid_fullscreen", "0", CVAR_ARCHIVE );
+	vid_display = ri.Cvar_Get( "vid_display", "0", CVAR_ARCHIVE );
+	vid_width = ri.Cvar_Get( "vid_width", "800", CVAR_ARCHIVE );
+	vid_height = ri.Cvar_Get( "vid_height", "600", CVAR_ARCHIVE );
 	vid_gamma = ri.Cvar_Get( "vid_gamma", "1.0", CVAR_ARCHIVE );
-	vid_ref = ri.Cvar_Get( "vid_ref", "r1gl", CVAR_ARCHIVE );
+	vid_ref = ri.Cvar_Get( "vid_ref", "gl", CVAR_ARCHIVE );
 
 	gl_texture_formats = ri.Cvar_Get ("gl_texture_formats", "png jpg tga", 0);
 	gl_pic_formats = ri.Cvar_Get ("gl_pic_formats", "png jpg tga", 0);
@@ -1480,11 +1486,18 @@ R_SetMode
 int R_SetMode (void)
 {
 	int err;
-	qboolean fullscreen;
+	int fullscreen;
 
-	fullscreen = FLOAT_EQ_ZERO(vid_fullscreen->value) ? false : true;
+	fullscreen = Q_ftol(vid_fullscreen->value);
+	if (fullscreen < 0)
+		fullscreen = 0;
+	else if (fullscreen > 2)
+		fullscreen = 2;
 
 	vid_fullscreen->modified = false;
+	vid_display->modified = false;
+	vid_width->modified = false;
+	vid_height->modified = false;
 	gl_mode->modified = false;
 
 	if (FLOAT_NE_ZERO(gl_forcewidth->value))
@@ -1590,7 +1603,7 @@ retryQGL:
 	}
 
 	// set our "safe" modes
-	gl_state.prev_mode = 3;
+	gl_state.prev_mode = 4;
 
 	// create the window and set up the context
 	ri.Con_Printf (PRINT_DEVELOPER, "R_SetMode()\n");
@@ -2005,7 +2018,8 @@ void EXPORT R_BeginFrame( float camera_separation )
 	/*
 	** change modes if necessary
 	*/
-	if ( gl_mode->modified || vid_fullscreen->modified )
+	if ( gl_mode->modified || vid_fullscreen->modified || vid_display->modified ||
+		vid_width->modified || vid_height->modified )
 	{	// FIXME: only restart if CDS is required
 		cvar_t	*ref;
 

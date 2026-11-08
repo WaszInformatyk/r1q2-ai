@@ -336,6 +336,8 @@ model_t *Mod_ForName (char *name, qboolean crash)
 
 	if (model_size)
 	{
+		/* Cached model sizes still need Hunk_End to finalize the mmap header. */
+		Hunk_End ();
 		loadmodel->extradatasize = model_size->size;
 	}
 	else

@@ -102,7 +102,7 @@ typedef struct image_s
 	int		upload_width, upload_height;	// after power of two and picmip
 	int		registration_sequence;		// 0 = free
 	struct msurface_s	*texturechain;	// for sort-by-texture world drawing
-	unsigned long		texnum;						// gl texture binding
+	GLuint			texnum;						// gl texture binding
 	//int		detailtexnum;
 	float	sl, tl, sh, th;				// 0,0 - 1,1 unless part of the scrap
 	//qboolean	scrap;
@@ -566,7 +566,7 @@ void		GLimp_BeginFrame( void );
 void	EXPORT	GLimp_EndFrame( void );
 int 		GLimp_Init( void *hinstance, void *hWnd );
 void		GLimp_Shutdown( void );
-int    	GLimp_SetMode( unsigned int *pwidth, unsigned int *pheight, int mode, qboolean fullscreen );
+int    	GLimp_SetMode( unsigned int *pwidth, unsigned int *pheight, int mode, int fullscreen );
 void	EXPORT	GLimp_AppActivate( qboolean active );
 void		GLimp_EnableLogging( qboolean enable );
 void		GLimp_LogNewFrame( void );

@@ -219,12 +219,12 @@ void EXPORT RW_IN_Commands (void)
 	/* can't put in loop because K_MOUSE4 doesn't come after K_MOUSE3 */
 	if ((mouse_buttonstate & (1<<3)) && !(mouse_oldbuttonstate & (1<<3)))
 	    in_state->Key_Event_fp(K_MOUSE4, true);
-	if (!(mouse_buttonstate * (1<<3)) && (mouse_oldbuttonstate & (1<<3)))
+	if (!(mouse_buttonstate & (1<<3)) && (mouse_oldbuttonstate & (1<<3)))
 	    in_state->Key_Event_fp(K_MOUSE4, false);
 	
 	if ((mouse_buttonstate & (1<<4)) && !(mouse_oldbuttonstate & (1<<4)))
 	    in_state->Key_Event_fp(K_MOUSE5, true);
-	if (!(mouse_buttonstate * (1<<4)) && (mouse_oldbuttonstate & (1<<4)))
+	if (!(mouse_buttonstate & (1<<4)) && (mouse_oldbuttonstate & (1<<4)))
 	    in_state->Key_Event_fp(K_MOUSE5, false);
 	
 	mouse_oldbuttonstate = mouse_buttonstate;

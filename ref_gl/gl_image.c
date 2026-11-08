@@ -21,6 +21,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "gl_local.h"
 #include <png.h>
 #include <jpeglib.h>
+#include <setjmp.h>
 
 image_t		gltextures[MAX_GLTEXTURES];
 int			numgltextures = 0;
@@ -651,44 +652,56 @@ abortload:
 	ri.FS_FreeFile (pcx);
 }
 
+/* Large source images are downsampled to MAX_TEXTURE_DIMENSIONS on upload. */
+#define MAX_IMAGE_SOURCE_DIMENSION 4096
+
 typedef struct {
     byte *Buffer;
     size_t Pos;
+    size_t Size;
 } TPngFileBuffer;
 
 void EXPORT PngReadFunc(png_struct *Png, png_bytep buf, png_size_t size)
 {
     TPngFileBuffer *PngFileBuffer=(TPngFileBuffer*)png_get_io_ptr(Png);
+
+	if (PngFileBuffer->Pos > PngFileBuffer->Size ||
+		size > PngFileBuffer->Size - PngFileBuffer->Pos)
+		png_error(Png, "Unexpected end of PNG data");
+
     memcpy(buf,PngFileBuffer->Buffer+PngFileBuffer->Pos,size);
     PngFileBuffer->Pos+=size;
 }
 
 void LoadPNG (const char *name, byte **pic, int *width, int *height)
 {
-	unsigned int	i, rowbytes;
+	png_uint_32		i, png_width, png_height;
+	size_t			rowbytes;
 	png_structp		png_ptr;
 	png_infop		info_ptr;
 	png_infop		end_info;
-	png_bytep		row_pointers[MAX_TEXTURE_DIMENSIONS];
+	png_bytep		row_pointers[MAX_IMAGE_SOURCE_DIMENSION];
 	double			file_gamma;
+	int				filesize, color_type, bit_depth;
+	qboolean		has_transparency;
 
-	TPngFileBuffer	PngFileBuffer = {NULL,0};
+	TPngFileBuffer	PngFileBuffer = {NULL,0,0};
 
 	*pic = NULL;
 
-	ri.FS_LoadFile (name, (void *)&PngFileBuffer.Buffer);
+	filesize = ri.FS_LoadFile (name, (void *)&PngFileBuffer.Buffer);
 
     if (!PngFileBuffer.Buffer)
 		return;
 
-	if ((png_check_sig(PngFileBuffer.Buffer, 8)) == 0)
+	PngFileBuffer.Size = (size_t)filesize;
+
+	if (filesize < 8 || png_sig_cmp(PngFileBuffer.Buffer, 0, 8))
 	{
-		ri.FS_FreeFile (PngFileBuffer.Buffer); 
+		ri.FS_FreeFile (PngFileBuffer.Buffer);
 		ri.Con_Printf (PRINT_ALL, "Not a PNG file: %s\n", name);
 		return;
     }
-
-	PngFileBuffer.Pos=0;
 
     png_ptr = png_create_read_struct (PNG_LIBPNG_VER_STRING, NULL,  NULL, NULL);
 
@@ -707,7 +720,7 @@ void LoadPNG (const char *name, byte **pic, int *width, int *height)
 		ri.Con_Printf (PRINT_ALL, "Bad PNG file: %s\n", name);
 		return;
     }
-    
+
 	end_info = png_create_info_struct(png_ptr);
     if (!end_info)
 	{
@@ -717,58 +730,80 @@ void LoadPNG (const char *name, byte **pic, int *width, int *height)
 		return;
     }
 
+	if (setjmp(png_jmpbuf(png_ptr)))
+	{
+		if (*pic)
+		{
+			free(*pic);
+			*pic = NULL;
+		}
+		png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
+		ri.FS_FreeFile(PngFileBuffer.Buffer);
+		ri.Con_Printf(PRINT_ALL, "Bad PNG file: %s\n", name);
+		return;
+	}
+
 	png_set_read_fn (png_ptr,(png_voidp)&PngFileBuffer,(png_rw_ptr)PngReadFunc);
 
 	png_read_info(png_ptr, info_ptr);
 
-	if (info_ptr->height > MAX_TEXTURE_DIMENSIONS)
+	png_width = png_get_image_width(png_ptr, info_ptr);
+	png_height = png_get_image_height(png_ptr, info_ptr);
+	color_type = png_get_color_type(png_ptr, info_ptr);
+	bit_depth = png_get_bit_depth(png_ptr, info_ptr);
+
+	if (!png_width || !png_height || png_width > MAX_IMAGE_SOURCE_DIMENSION ||
+		png_height > MAX_IMAGE_SOURCE_DIMENSION)
 	{
-        png_destroy_read_struct(&png_ptr, &info_ptr, (png_infopp)NULL);
+        png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
 		ri.FS_FreeFile (PngFileBuffer.Buffer);
-		ri.Con_Printf (PRINT_ALL, "Oversized PNG file: %s\n", name);
+		ri.Con_Printf (PRINT_ALL, "Invalid or oversized PNG file: %s\n", name);
 		return;
 	}
 
-	if (info_ptr->color_type == PNG_COLOR_TYPE_PALETTE)
-	{
+	has_transparency = png_get_valid(png_ptr, info_ptr, PNG_INFO_tRNS) != 0;
+
+	if (color_type == PNG_COLOR_TYPE_PALETTE)
 		png_set_palette_to_rgb (png_ptr);
-		png_set_filler(png_ptr, 0xFF, PNG_FILLER_AFTER);
-	}
 
-	if (info_ptr->color_type == PNG_COLOR_TYPE_RGB)
-		png_set_filler(png_ptr, 0xFF, PNG_FILLER_AFTER);
+	if (color_type == PNG_COLOR_TYPE_GRAY && bit_depth < 8)
+		png_set_expand_gray_1_2_4_to_8(png_ptr);
 
-	if ((info_ptr->color_type == PNG_COLOR_TYPE_GRAY) && info_ptr->bit_depth < 8)
-		png_set_gray_1_2_4_to_8(png_ptr);
-
-	if (png_get_valid(png_ptr, info_ptr, PNG_INFO_tRNS))
+	if (has_transparency)
 		png_set_tRNS_to_alpha(png_ptr);
 
-	if (info_ptr->color_type == PNG_COLOR_TYPE_GRAY || info_ptr->color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
+	if (color_type == PNG_COLOR_TYPE_GRAY || color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
 		png_set_gray_to_rgb(png_ptr);
 
-	if (info_ptr->bit_depth == 16)
+	if (bit_depth == 16)
 		png_set_strip_16(png_ptr);
 
-	if (info_ptr->bit_depth < 8)
-        png_set_packing(png_ptr);
+	if (!(color_type & PNG_COLOR_MASK_ALPHA) && !has_transparency)
+		png_set_filler(png_ptr, 0xFF, PNG_FILLER_AFTER);
 
 	if (png_get_gAMA(png_ptr, info_ptr, &file_gamma))
 		png_set_gamma (png_ptr, 2.0, file_gamma);
 
 	png_read_update_info(png_ptr, info_ptr);
 
+	if (png_get_channels(png_ptr, info_ptr) != 4)
+		png_error(png_ptr, "PNG did not expand to RGBA");
+
 	rowbytes = png_get_rowbytes(png_ptr, info_ptr);
+	if (rowbytes != (size_t)png_width * 4)
+		png_error(png_ptr, "Unexpected PNG row size");
 
-	*pic = malloc (info_ptr->height * rowbytes);
+	*pic = malloc ((size_t)png_height * rowbytes);
+	if (!*pic)
+		png_error(png_ptr, "Insufficient memory for PNG image");
 
-	for (i = 0; i < info_ptr->height; i++)
+	for (i = 0; i < png_height; i++)
 		row_pointers[i] = *pic + i*rowbytes;
 
 	png_read_image(png_ptr, row_pointers);
 
-	*width = info_ptr->width;
-	*height = info_ptr->height;
+	*width = png_width;
+	*height = png_height;
 
 	png_read_end(png_ptr, end_info);
 	png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
@@ -1503,35 +1538,6 @@ NiceAss: Code from Q2Ice
 =================================================================
 */
 
-void EXPORT jpg_null(j_decompress_ptr cinfo)
-{
-}
-
-boolean EXPORT jpg_fill_input_buffer(j_decompress_ptr cinfo)
-{
-    ri.Con_Printf(PRINT_ALL, "Premature end of JPEG data\n");
-    return 1;
-}
-
-void EXPORT jpg_skip_input_data(j_decompress_ptr cinfo, long num_bytes)
-{
-        
-    cinfo->src->next_input_byte += (size_t) num_bytes;
-    cinfo->src->bytes_in_buffer -= (size_t) num_bytes;
-}
-
-void jpeg_mem_src (j_decompress_ptr cinfo, byte *mem, int len)
-{
-    cinfo->src = (struct jpeg_source_mgr *)(*cinfo->mem->alloc_small)((j_common_ptr) cinfo, JPOOL_PERMANENT, sizeof(struct jpeg_source_mgr));
-    cinfo->src->init_source = jpg_null;
-    cinfo->src->fill_input_buffer = jpg_fill_input_buffer;
-    cinfo->src->skip_input_data = jpg_skip_input_data;
-    cinfo->src->resync_to_restart = jpeg_resync_to_restart;
-    cinfo->src->term_source = jpg_null;
-    cinfo->src->bytes_in_buffer = len;
-    cinfo->src->next_input_byte = mem;
-}
-
 /*
 ==============
 LoadJPG
@@ -1565,9 +1571,9 @@ void LoadJPG (const char *filename, byte **pic, int *width, int *height)
 	jpeg_read_header(&cinfo, true);
 	jpeg_start_decompress(&cinfo);
 
-	if(cinfo.output_components != 3 && cinfo.output_components != 4)
+	if(cinfo.output_components != 3)
 	{
-		ri.Con_Printf(PRINT_ALL, "Invalid JPEG colour components\n");
+		ri.Con_Printf(PRINT_ALL, "Unsupported JPEG colour format\n");
 		jpeg_destroy_decompress(&cinfo);
 		ri.FS_FreeFile(rawdata);
 		return;
@@ -1619,6 +1625,7 @@ void LoadJPG (const char *filename, byte **pic, int *width, int *height)
 	free (scanline);
 	jpeg_finish_decompress (&cinfo);
 	jpeg_destroy_decompress (&cinfo);
+	ri.FS_FreeFile (rawdata);
 
 	*pic = rgbadata;
 }
@@ -2810,7 +2817,7 @@ image_t *GL_LoadPic (const char *name, byte *pic, int width, int height, imagety
 			{
 				for (i=0, image=gltextures ; i<numgltextures ; i++,image++)
 				{
-					fprintf (dump, "%i: %s[%s], %dx%d, texnum %lu, type %d, sequence %d\n", i, image->basename, image->name, image->width, image->height, image->texnum, image->type, image->registration_sequence);
+					fprintf (dump, "%i: %s[%s], %dx%d, texnum %u, type %d, sequence %d\n", i, image->basename, image->name, image->width, image->height, image->texnum, image->type, image->registration_sequence);
 				}
 				fclose (dump);
 			}
